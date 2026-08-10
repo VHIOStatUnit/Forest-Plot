@@ -1,0 +1,394 @@
+---
+title: "Tutorial: Subgroup Cox Forest Plots Using the lung Dataset"
+author: "Example analysis"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Overview
+
+This tutorial demonstrates how to use `cox_subgroup_forest()` with the
+built-in `lung` dataset from the **survival** package.
+
+The function was written to create publication-style subgroup forest plots
+from treatment-effect Cox proportional-hazards models. It fits
+
+```r
+Surv(time, event) ~ treatment
+```
+
+within each subgroup and reports hazard ratios (HRs), 95% confidence
+intervals, p-values, sample sizes, events, and median survival by arm.
+
+> **Important:** `lung` does not contain a randomised treatment variable.
+> For a software demonstration, this tutorial uses `sex` as the two-level
+> comparison variable. The resulting HRs are observational sex comparisons,
+> not treatment effects.
+
+# 1. Packages
+
+```{r setup, message=FALSE, warning=FALSE}
+library(survival)
+library(dplyr)
+library(tidyr)
+
+source("forestplot_favouring_function.R")
+```
+
+The main function also uses `broom`, `purrr`, `ggplot2`, `forestploter`,
+`tibble`, `stringr`, and `grid`.
+
+# 2. Load the lung data
+
+```{r load-data}
+data("lung", package = "survival")
+
+dim(lung)
+head(lung)
+```
+
+The key variables used here are:
+
+- `time`: observed survival time;
+- `status`: censoring/event indicator;
+- `sex`: coded as 1/2;
+- `ph.ecog`: ECOG performance status; and
+- `age`: patient age.
+
+# 3. Prepare the analysis dataset
+
+The requested transformation is applied below.
+
+```{r prepare-data}
+df <- lung %>%
+  mutate(
+    sex        = factor(
+      sex,
+      levels = c(1, 2),
+      labels = c("Male", "Female")
+    ),
+    ecog       = factor(
+      ph.ecog,
+      levels = c(0, 1, 2, 3),
+      labels = c("ECOG 0", "ECOG 1", "ECOG 2", "ECOG 3")
+    ),
+    age_grp    = factor(
+      ifelse(age < 63, "Age < 63", "Age >= 63")
+    ),
+    status_bin = as.numeric(status == 2)
+  ) %>%
+  drop_na(time, status_bin, sex, ecog, age_grp, age)
+
+df %>%
+  count(sex)
+
+df %>%
+  count(ecog)
+
+df %>%
+  count(age_grp)
+```
+
+`status_bin` is coded as 1 for the event and 0 for censoring.
+
+# 4. Define the comparison arms
+
+The function requires exactly two treatment levels. Because `lung` has no
+treatment variable, the demonstration uses `sex`:
+
+```{r treatment-definition}
+table(df$sex)
+
+arm_order <- c("Male", "Female")
+arm_labels <- c("Male", "Female")
+```
+
+This means the fitted model coefficient represents:
+
+```text
+Male vs Female
+```
+
+and HR < 1 corresponds to lower hazard in males relative to females.
+
+Again, this is only a demonstration of the function.
+
+# 5. Run the subgroup forest analysis
+
+We will examine two subgroup variables:
+
+- ECOG performance status;
+- age group.
+
+```{r run-analysis}
+result <- cox_subgroup_forest(
+  data = df,
+  covariates = c("ecog", "age_grp"),
+  labels = c(
+    "ECOG performance status",
+    "Age group"
+  ),
+  treatment = "sex",
+  time = "time",
+  event = "status_bin",
+  endpoint_labels = "Overall survival",
+  arm_order = arm_order,
+  treatment_labels = arm_labels,
+  palette = "grey30",
+  time_unit = "months",
+  length_plot = 60,
+  ci_pch = 15, 
+  ci_lty = 1,
+  ci_lwd = 3, 
+  ci_Theight = 0.4, 
+  sizes = 1
+)
+```
+
+# 6. Examine the results table
+
+```{r results-table}
+result$results_table
+```
+
+The table contains:
+
+- `subgroup`: subgroup definition;
+- `n`: number of observations used;
+- `n_event`: number of events;
+- `median_a`: median survival for Arm A;
+- `median_b`: median survival for Arm B;
+- `hr`: hazard ratio;
+- `conf_low` and `conf_high`: 95% CI;
+- `p_value`: Wald p-value from the Cox model.
+
+For this example, Arm A is Male and Arm B is Female.
+
+# 7. Median survival table
+
+A compact median-survival table is available:
+
+```{r median-table}
+result$median_survival_table
+```
+
+This can be useful when creating supplementary tables or checking the
+values displayed in the forest plot.
+
+# 8. Plot ECOG subgroup results
+
+The function returns a forest plot for each covariate.
+
+```{r ecog-plot, fig.width=10, fig.height=7}
+result$plots[["ECOG performance status"]]
+```
+
+The plot contains an **All patients** estimate followed by the individual
+ECOG subgroups.
+
+The x-axis is logarithmic and the vertical reference line is HR = 1.
+
+# 9. Plot age-group results
+
+```{r age-plot, fig.width=10, fig.height=6}
+result$plots[["Age group"]]
+```
+
+The same modelling and display approach is used for the age subgroups.
+
+# 10. Combined forest plot
+
+A combined forest plot is also returned:
+
+```{r combined-plot, fig.width=11, fig.height=9}
+result$combined_plots
+```
+
+This provides a compact overview of the subgroup estimates from both
+covariates.
+
+# 11. Access the fitted Cox models
+
+The fitted models are stored in `result$models`.
+
+```{r models}
+names(result$models)
+
+names(result$models[["ECOG performance status"]])
+```
+
+A particular model can be extracted and inspected with standard
+`survival` methods:
+
+```{r inspect-model}
+fit <- result$models[["ECOG performance status"]][[
+  "ECOG performance status | ECOG 2 | Overall survival"
+]]
+
+summary(fit)
+```
+
+The exact subgroup names available depend on the data after missing-value
+filtering.
+
+# 12. Continuous covariates
+
+The function can also treat a numeric covariate as continuous.
+
+For example, use age directly:
+
+```{r continuous-age}
+result_age <- cox_subgroup_forest(
+  data = df,
+  covariates = c("age"),
+  labels = c("Age"),
+  treatment = "sex",
+  time = "time",
+  event = "status_bin",
+  endpoint_labels = "Overall survival",
+  continuous_vars = "age",
+  arm_order = arm_order,
+  treatment_labels = arm_labels,
+  palette = "grey30",
+  time_unit = "months"
+)
+```
+
+For the forest plot, age is divided at its median into two groups. The
+function also returns a separate per-unit effect:
+
+```{r continuous-effects}
+result_age$continuous_effects
+```
+
+This is an important distinction:
+
+- the forest-plot rows estimate the **Male vs Female** hazard ratio within
+  age-defined groups;
+- `continuous_effects` estimates the hazard ratio associated with a
+  **one-unit increase in age**, adjusted for treatment through stratification.
+
+These are different quantities.
+
+# 13. Interpreting an HR
+
+If a row has an HR such as:
+
+```text
+0.70 (0.50-0.98)
+```
+
+the estimate is a 30% lower hazard for Arm A relative to Arm B, with a
+95% CI from 0.50 to 0.98.
+
+The direction follows the function's fixed coding:
+
+```text
+HR = Arm A / Arm B
+```
+
+In this tutorial:
+
+```text
+Arm A = Male
+Arm B = Female
+```
+
+Therefore, the interpretation is a comparison of males with females.
+
+# 14. Changing the length of the plot and the ticks and x limits
+
+Automatically, there will be 5 ticks and labels and the length is 40 spaces.
+
+```{r}
+result <- cox_subgroup_forest(
+  data = df,
+  covariates = c("ecog", "age_grp"),
+  labels = c(
+    "ECOG performance status",
+    "Age group"
+  ),
+  treatment = "sex",
+  time = "time",
+  event = "status_bin",
+  endpoint_labels = "Overall survival",
+  arm_order = arm_order,
+  treatment_labels = arm_labels,
+  palette = "grey30",
+  time_unit = "months",
+  length_plot = 50,
+  xlim = c(0.5, 6),
+  ticks_at = c(0.5, 1, 2, 4),
+  ci_pch = 20, 
+  ci_lty = 1,
+  ci_lwd = 3, 
+  ci_Theight = 0.4, 
+  sizes = 1
+)
+```
+
+```{r, fig.width=11, fig.height=9}
+result$combined_plots
+```
+
+# 15. Exporting results
+
+The results table is an ordinary data frame, so it can be exported with
+standard R tools:
+
+```{r export, eval=FALSE}
+write.csv(
+  result$results_table,
+  "lung_subgroup_cox_results.csv",
+  row.names = FALSE
+)
+```
+
+The forest plot object can be drawn on a graphics device such as PDF or PNG
+using standard R graphics workflows. The supplied function itself returns
+`forestploter` objects rather than writing files automatically.
+
+# 16. Recommended use with real trial data
+
+For a real randomised trial, replace the demonstration `sex` variable with
+the actual two-level treatment-arm variable.
+
+For example:
+
+```r
+result <- cox_subgroup_forest(
+  data = trial_data,
+  covariates = c("sex", "age_grp", "ecog"),
+  labels = c("Sex", "Age group", "ECOG"),
+  treatment = "treatment",
+  time = "os_time",
+  event = "os_event",
+  endpoint_labels = "Overall survival",
+  arm_order = c("Treatment A", "Treatment B"),
+  treatment_labels = c("Treatment A", "Treatment B"),
+  palette = "grey30"
+)
+```
+
+For formal subgroup inference, do not rely on within-subgroup p-values alone.
+A treatment-by-subgroup interaction analysis is generally needed to test
+whether treatment effects differ between subgroups.
+
+# 17. Summary
+
+The key workflow is:
+
+1. load the survival data;
+2. create appropriately coded variables;
+3. identify a two-level treatment variable;
+4. specify subgroup covariates;
+5. pair survival time and event variables;
+6. run `cox_subgroup_forest()`;
+7. inspect `results_table`;
+8. inspect the individual or combined forest plots; and
+9. interpret the HR according to the specified `arm_order`.
+
+The `lung` example is intended to make the code reproducible and easy to
+learn. It should not be interpreted as a causal treatment analysis.
