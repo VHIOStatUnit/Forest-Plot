@@ -595,11 +595,11 @@ suppressPackageStartupMessages({
   
   ft_theme <- forestploter::forest_theme(
     base_size      = 11,
-    ci_pch         = 15,
+    ci_pch         = ci_pch,
     ci_col         = if (multi_endpoint) endpoint_col[[1]] else "#4472C4",
-    ci_lty         = 1,
-    ci_lwd         = 3,
-    ci_Theight     = 0.4,
+    ci_lty         = ci_lty,
+    ci_lwd         = ci_lwd,
+    ci_Theight     = ci_Theight,
     axis_extend = c(0.2, 0.05),
     # Vertical line width/type/color
     vertline_lwd = 1,
