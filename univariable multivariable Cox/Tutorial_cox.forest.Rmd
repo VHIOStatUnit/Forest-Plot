@@ -1,0 +1,380 @@
+---
+title: "cox_forest() Tutorial"
+author: "Julian Silan"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: kable
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+This tutorial walks through `cox_forest()` end to end using
+`survival::lung`, a built-in dataset of advanced lung cancer patients. It
+covers data preparation, a basic univariable forest plot, categorical vs.
+continuous covariates, custom reference levels, level exclusion,
+multivariable models, multiple endpoints, and the main styling arguments.
+
+Source the function first (adjust the path to wherever `cox_forest.R` lives
+relative to this `.Rmd` file):
+
+```{r source-function}
+source("/Users/julian/Desktop/VHIO/R code/Forestplot/Univariable_Multivariable/cox.forest_function.R")
+```
+
+```{r libraries}
+library(survival)
+library(dplyr)
+```
+
+# Prepare the data
+
+`survival::lung` needs a little massaging before it's ready for Cox
+modelling: `status` is coded 1/2 (censored/dead) rather than 0/1, `sex` is
+an unlabelled numeric code, and `ph.ecog` is stored as numeric even though
+it is really an ordered categorical performance-status score. We also add a
+synthetic treatment arm and a synthetic PFS endpoint so the tutorial can
+demonstrate multivariable models and multi-endpoint plots.
+
+```{r prepare-data}
+set.seed(42)
+
+lung2 <- survival::lung %>%
+  mutate(
+    event_os  = status - 1,                       # 1 = death, 0 = censored
+    time_os   = time,
+    sex       = factor(sex, levels = c(1, 2), labels = c("Male", "Female")),
+    ph.ecog   = factor(ph.ecog),                   # 0-3 performance status
+    treatment = sample(c("Arm A", "Arm B"), n(), replace = TRUE),
+    time_pfs  = pmin(time_os, time_os * runif(n(), 0.4, 0.9)),
+    event_pfs = ifelse(time_pfs < time_os, 1, event_os)
+  ) %>%
+  filter(!is.na(ph.ecog), !is.na(sex), !is.na(age))
+
+#glimpse(lung2)
+```
+
+> `time_pfs` / `event_pfs` here are a *simulated* PFS endpoint (PFS event
+> always occurs no later than OS) purely so the tutorial has two endpoints
+> to work with — `survival::lung` does not contain real PFS data.
+
+# A single-covariate univariable forest plot
+
+The simplest possible call: one categorical covariate, one endpoint,
+univariable model.
+
+```{r sex-only}
+res_sex <- cox_forest(
+  data       = lung2,
+  covariates = "sex",
+  labels     = "Sex",
+  time       = "time_os",
+  event      = "event_os",
+  endpoint_labels = "OS",
+  model_type = "univariable"
+)
+
+res_sex$results_table
+```
+
+```{r sex-only-plot, fig.height=3}
+res_sex$plots$univariable
+```
+
+`results_table` has one row per covariate level — including an explicit
+`"Reference"` row for the first factor level (`"Male"`, since that's
+`levels(lung2$sex)[1]`) with `hr`/`conf_low`/`conf_high` set to `NA`. The
+plot draws no marker or CI line for that row, exactly as expected for a
+reference category.
+
+# Several covariates at once (categorical + continuous)
+
+Add `age` (continuous — auto-detected because it has more than 5 distinct
+values) and `ph.ecog` (categorical, 4 levels). Each covariate still gets its
+**own** univariable Cox model: `Surv(time_os, event_os) ~ age`,
+`Surv(time_os, event_os) ~ sex`, `Surv(time_os, event_os) ~ ph.ecog`.
+
+```{r uni-several}
+res_uni <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "age", "ph.ecog"),
+  labels     = c("Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  endpoint_labels = "OS",
+  continuous_vars = "age",
+  model_type = "univariable"
+)
+
+res_uni$plots$univariable
+```
+
+## Specify x-axis
+
+```{r uni-several-axis}
+res_uni <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "age", "ph.ecog"),
+  labels     = c("Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  endpoint_labels = "OS",
+  continuous_vars = "age",
+  model_type = "univariable",
+  xlim = c(0.25, 4),
+  ticks_at = c(0.5, 1, 2),
+)
+
+res_uni$plots$univariable
+```
+
+
+
+
+For `age`, `results_table$level` reads `"per 1-unit increase"`. To report
+the HR per 10-year increase instead:
+
+```{r uni-age10}
+res_uni_age10 <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "age", "ph.ecog"),
+  labels     = c("Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  continuous_vars = "age",
+  continuous_increase = list(age = 10),
+  model_type = "univariable"
+)
+
+res_uni_age10$results_table %>% filter(covariate == "age")
+```
+
+
+# Custom reference levels
+
+By default the reference level for a categorical covariate is its first
+factor level. Use `ref_levels` to change that — useful, for example, to
+make `"Female"` the reference for `sex`, or a "good" ECOG score the
+reference instead of `"0"`.
+
+```{r ref-levels}
+res_ref <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "ph.ecog"),
+  labels     = c("Sex", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  ref_levels = list(sex = "Female"),
+  model_type = "univariable",
+  xlim = c(0.25, 4),
+  ticks_at = c(0.5, 1, 2),
+)
+
+res_ref$plots$univariable
+```
+
+# Excluding a level
+
+`ph.ecog == "3"` has only a handful of patients in `lung`. `exclude_levels`
+drops it by setting those values to `NA`, which then falls out through the
+existing complete-case filtering used inside each model:
+
+```{r exclude-levels}
+res_excl <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "ph.ecog"),
+  labels     = c("Sex", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  exclude_levels = list(ph.ecog = "3"),
+  model_type = "univariable"
+)
+
+res_excl$results_table %>% filter(covariate == "ph.ecog")
+```
+
+For a **multivariable** model this exclusion drops the affected patients
+from the entire model (since multivariable fitting requires complete cases
+across every covariate simultaneously) — see the next section.
+
+# Multivariable models
+
+Setting `model_type = "multivariable"` fits **one** Cox model containing
+all requested covariates together:
+`Surv(time_os, event_os) ~ sex + age + ph.ecog`.
+
+```{r multivariable}
+res_multi <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "age", "ph.ecog"),
+  labels     = c("Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  continuous_vars = "age",
+  model_type = "multivariable",
+  xlim = c(0.25, 4),
+  ticks_at = c(0.5, 1, 2),
+)
+
+res_multi$plots$multivariable
+```
+
+To see univariable and multivariable side by side (e.g. for a "crude vs
+adjusted" supplementary table), request both:
+
+```{r both}
+res_both <- cox_forest(
+  data       = lung2,
+  covariates = c("sex", "age", "ph.ecog"),
+  labels     = c("Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  continuous_vars = "age",
+  model_type = "both"
+)
+
+res_both$plots$univariable
+res_both$plots$multivariable
+```
+
+# Including a treatment / arm variable
+
+There's nothing special about a treatment arm — add it to `covariates`
+(and `labels`) exactly like any other covariate:
+
+```{r treatment}
+res_trt <- cox_forest(
+  data       = lung2,
+  covariates = c("treatment", "sex", "age", "ph.ecog"),
+  labels     = c("Treatment", "Sex", "Age", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  continuous_vars = "age",
+  ref_levels = list(treatment = "Arm A"),
+  model_type = "multivariable",
+  xlim = c(0.25, 4),
+  ticks_at = c(0.5, 1, 2),
+)
+
+res_trt$plots$multivariable
+```
+
+# Multiple endpoints (OS and PFS) with colour coding
+
+Pass `time` and `event` as vectors, paired by position, along with matching
+`endpoint_labels`. With more than one endpoint the plot automatically
+colour-codes the confidence intervals per endpoint and adds a legend below
+the figure.
+
+```{r two-endpoints}
+res_two_ep <- cox_forest(
+  data       = lung2,
+  covariates = c("treatment", "sex", "age"),
+  labels     = c("Treatment", "Sex", "Age"),
+  time       = c("time_os", "time_pfs"),
+  event      = c("event_os", "event_pfs"),
+  endpoint_labels = c("OS", "PFS"),
+  continuous_vars = "age",
+  ref_levels = list(treatment = "Arm A"),
+  model_type = "univariable",
+  palette    = c("#1B9E77", "#D95F02")   # one colour per endpoint
+)
+
+res_two_ep$plots$univariable
+```
+
+Rows are grouped covariate-major (all OS/PFS rows for `Treatment` together,
+then all rows for `Sex`, then `Age`), so each covariate's cross-endpoint
+comparison stays visually adjacent.
+
+# Styling the plot
+
+A few of the most commonly adjusted arguments:
+
+```{r styled}
+res_styled <- cox_forest(
+  data       = lung2,
+  covariates = c("treatment", "sex", "ph.ecog"),
+  labels     = c("Treatment", "Sex", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  ref_levels = list(treatment = "Arm A"),
+  model_type = "univariable",
+  digits      = 2,
+  row_height  = 1.4,                    # 40% taller rows
+  ci_pch      = 15,                     # rectangle markers
+  ci_lwd      = 3,                      # thickness of the lines
+  ci_Theight = 0.6,                     # height of CI bands
+  sizes       = 1,                      # size of HR
+  risk_labels = c("Favours Arm A", "Favours Arm B"),
+  title       = "Univariable Cox regression - Overall Survival",
+  covariate_label_row = TRUE            # bold header row per covariate
+)
+
+res_styled$plots$univariable
+```
+
+- `row_height` — multiplier applied to every body row's height (`1.3` = 30%
+  taller); useful when labels wrap or the figure feels cramped.
+- `covariate_label_row = TRUE` inserts a dedicated bold row with just the
+  covariate name above its levels, instead of bolding the first level row
+  in place.
+- `risk_labels` adds directional arrow annotations under the x-axis (only
+  makes sense when every covariate shares a consistent "favours A / favours
+  B" framing, e.g. a single treatment-arm-anchored subgroup plot).
+- `xlim` / `ticks_at` let you fix the axis range and tick marks manually
+  instead of relying on the automatic (CI-range-based) defaults — handy for
+  keeping several related figures on the same scale.
+
+
+# Adopt length of the forestplot
+
+```{r length}
+res_length <- cox_forest(
+  data       = lung2,
+  covariates = c("treatment", "sex", "ph.ecog"),
+  labels     = c("Treatment", "Sex", "ECOG PS"),
+  time       = "time_os",
+  event      = "event_os",
+  ref_levels = list(treatment = "Arm A"),
+  model_type = "univariable",
+  xlim       = c(0.25, 4),
+  ticks_at   = c( 0.5, 1, 2),
+  digits      = 2,
+  row_height  = 1.3,                    # 30% taller rows
+  ci_pch      = 18,                     # diamond markers
+  ci_lwd      = 2,
+  sizes       = 1,                      # size of HR
+  length_plot = 60,
+  risk_labels = c("Favours Arm A", "Favours Arm B"),
+  title       = "Univariable Cox regression - Overall Survival",
+  covariate_label_row = TRUE            # bold header row per covariate
+)
+
+res_length$plots$univariable
+```
+
+# Session info
+
+```{r session-info}
+sessionInfo()
+```
+
+# Next steps
+
+- See `README.md` for the full argument reference.
+- See `test-cox_forest.R` for further worked examples of every argument,
+  including edge cases like invalid reference levels and multi-endpoint
+  level exclusion.
