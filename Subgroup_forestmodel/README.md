@@ -100,22 +100,29 @@ A minimal call looks like:
 
 ```r
 result <- cox_subgroup_forest(
-  data = df,
-  covariates = c("ecog", "age_grp"),
-  labels = c("ECOG performance status", "Age group"),
-  treatment = "sex",
-  time = "time",
-  event = "status_bin",
-  endpoint_labels = "Overall survival",
-  arm_order = c("Male", "Female"),
-  treatment_labels = c("Male", "Female"),
-  palette = "grey30",
-  time_unit = "months"
+  data = lung2,
+  covariates = c("sex", "ph.ecog"),
+  labels = c("Sex", "ECOG PS"),
+  treatment = "treatment",
+  time = c("time_os"),
+  event = c("event_os"),
+  endpoint_labels = c("Overall Survival"),
+  time_unit = "days",
+  palette = c("#0F084B"),
+  exclude_levels = list(ph.ecog = "3"),
+  xlim = c(0.25, 4),
+  ticks_at = c(0.5, 1, 2),
+  length_plot = 60,
+  #weights = "weights_ATE", # optional if PS used
+  ci_pch = 15, 
+  ci_lty = 1,
+  ci_lwd = 3, 
+  ci_Theight = 0.4, 
+  sizes = 1,
+  row_height = 1.4,
+  covariate_label_row = TRUE
 )
 ```
-
-Here, `Male` is treated as Arm A and `Female` as Arm B. This is only a
-software demonstration using the `lung` dataset.
 
 ## Inspecting the results
 
@@ -134,7 +141,7 @@ For example:
 
 ```r
 result$results_table
-result$plots[["ECOG performance status"]]
+result$plots[["ECOG PS"]]
 result$combined_plots
 ```
 
@@ -152,9 +159,6 @@ Because the function reports **Arm A vs Arm B**, an HR below 1 indicates a
 lower estimated hazard in Arm A than Arm B. The confidence interval gives the
 uncertainty around that estimate.
 
-For the `lung` demonstration, however, this should be interpreted as a
-**sex-associated hazard comparison**, not as evidence that a treatment causes
-a survival benefit.
 
 ## Categorical and continuous covariates
 
